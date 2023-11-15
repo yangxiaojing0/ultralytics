@@ -32,6 +32,7 @@ from ultralytics.utils.plotting import plot_tune_results
 class Tuner:
     """
     Class responsible for hyperparameter tuning of YOLO models.
+    超参调整，在给定次数的迭代中进化YOLO模型超参数。通过根据搜索空间对它们进行变异，并重新训练模型来评估它们的性能。
 
     The class evolves YOLO model hyperparameters over a given number of iterations
     by mutating them according to the search space and retraining the model to evaluate their performance.
