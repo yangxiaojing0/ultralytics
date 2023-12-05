@@ -248,6 +248,7 @@ class LoadImages:
 
     This class manages the loading and pre-processing of image and video data for YOLOv8. It supports loading from
     various formats, including single image files, video files, and lists of image and video paths.
+    此类，管理图像\视频加载的预处理
 
     Attributes:
         imgsz (int): Image size, defaults to 640.

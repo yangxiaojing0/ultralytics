@@ -45,6 +45,8 @@ class DetectionValidator(BaseValidator):
         """Preprocesses batch of images for YOLO training."""
         batch['img'] = batch['img'].to(self.device, non_blocking=True)
         batch['img'] = (batch['img'].half() if self.args.half else batch['img'].float()) / 255
+        batch['flo'] = batch['flo'].to(self.device, non_blocking=True)
+        batch['flo'] = (batch['flo'].half() if self.args.half else batch['flo'].float()) / 255
         for k in ['batch_idx', 'cls', 'bboxes']:
             batch[k] = batch[k].to(self.device)
 
@@ -182,7 +184,7 @@ class DetectionValidator(BaseValidator):
         iou = box_iou(labels[:, 1:], detections[:, :4])
         return self.match_predictions(detections[:, 5], labels[:, 0], iou)
 
-    def build_dataset(self, img_path, mode='val', batch=None):
+    def build_dataset(self, img_path, flo_path, mode='val', batch=None):
         """
         Build YOLO Dataset.
 
@@ -192,11 +194,20 @@ class DetectionValidator(BaseValidator):
             batch (int, optional): Size of batches, this is for `rect`. Defaults to None.
         """
         gs = max(int(de_parallel(self.model).stride if self.model else 0), 32)
-        return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, stride=gs)
+        return build_yolo_dataset(self.args, img_path, flo_path,batch, self.data, mode=mode, stride=gs)
 
     def get_dataloader(self, dataset_path, batch_size):
         """Construct and return dataloader."""
-        dataset = self.build_dataset(dataset_path, batch=batch_size, mode='val')
+        img_path=dataset_path  # train or val
+        try:
+            flo_path=Path(img_path).parent/'flo2png' # 搜索光流图
+            flo_list=list(flo_path.glob('[!.]*.*'))
+            assert len(flo_list)!=0
+            print('trainning with flo files')
+        except:
+            Warning('donot have flo files')
+        dataset = self.build_dataset(img_path, flo_path, batch_size, mode='val')
+        # dataset = self.build_dataset(dataset_path, batch=batch_size, mode='val')
         return build_dataloader(dataset, batch_size, self.args.workers, shuffle=False, rank=-1)  # return dataloader
 
     def plot_val_samples(self, batch, ni):

@@ -1,5 +1,4 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
-
 import glob
 import math
 import os
@@ -17,7 +16,8 @@ from torch.utils.data import Dataset
 from ultralytics.utils import DEFAULT_CFG, LOCAL_RANK, LOGGER, NUM_THREADS, TQDM
 
 from .utils import HELP_URL, IMG_FORMATS
-
+# from utils import HELP_URL, IMG_FORMATS
+# from ultralytics.data.utils import HELP_URL,IMG_FORMATS
 
 class BaseDataset(Dataset):
     """
@@ -49,6 +49,7 @@ class BaseDataset(Dataset):
 
     def __init__(self,
                  img_path,
+                 flo_path, # 更改
                  imgsz=640,
                  cache=False,
                  augment=True,
@@ -64,14 +65,16 @@ class BaseDataset(Dataset):
         """Initialize BaseDataset with given configuration and options."""
         super().__init__()
         self.img_path = img_path
+        self.flo_path = flo_path # note: flo
         self.imgsz = imgsz
         self.augment = augment
         self.single_cls = single_cls
         self.prefix = prefix
         self.fraction = fraction
         self.im_files = self.get_img_files(self.img_path)
+        self.flo_files=self.get_img_files(self.flo_path) # note: flo
         self.labels = self.get_labels()
-        self.update_labels(include_class=classes)  # single_cls and include_class
+        self.update_labels(include_class=classes)  # single_cls and include_class,更新标签以仅包括这些类（可选）
         self.ni = len(self.labels)  # number of images
         self.rect = rect
         self.batch_size = batch_size
@@ -81,14 +84,17 @@ class BaseDataset(Dataset):
             assert self.batch_size is not None
             self.set_rectangle()
 
-        # Buffer thread for mosaic images
+        # Buffer thread for mosaic images 用于马赛克图像的缓冲线程
         self.buffer = []  # buffer size = batch size
         self.max_buffer_length = min((self.ni, self.batch_size * 8, 1000)) if self.augment else 0
-
-        # Cache images
+        
+        ''''''
+        assert fraction==1, 'flo error: fraction must be equal to 1'
+        
+        # Cache images 缓存图像
         if cache == 'ram' and not self.check_cache_ram():
             cache = False
-        self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
+        self.ims, self.im_hw0, self.im_hw, self.flo= [None] * self.ni, [None] * self.ni, [None] * self.ni, [None] * self.ni
         self.npy_files = [Path(f).with_suffix('.npy') for f in self.im_files]
         if cache:
             self.cache_images(cache)
@@ -118,7 +124,7 @@ class BaseDataset(Dataset):
             assert im_files, f'{self.prefix}No images found in {img_path}'
         except Exception as e:
             raise FileNotFoundError(f'{self.prefix}Error loading data from {img_path}\n{HELP_URL}') from e
-        if self.fraction < 1:
+        if self.fraction < 1: # 取小部分：false
             im_files = im_files[:round(len(im_files) * self.fraction)]
         return im_files
 
@@ -141,45 +147,58 @@ class BaseDataset(Dataset):
             if self.single_cls:
                 self.labels[i]['cls'][:, 0] = 0
 
-    def load_image(self, i, rect_mode=True):
+    # def load_image(self, i, rect_mode=True):
+    def load_image(self, i, rect_mode=False):
         """Loads 1 image from dataset index 'i', returns (im, resized hw)."""
-        im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
+        im, f, fn, flo, flo_files = self.ims[i], self.im_files[i], self.npy_files[i], self.flo[i], self.flo_files[i]
         if im is None:  # not cached in RAM
             if fn.exists():  # load npy
                 try:
                     im = np.load(fn)
+                    Warning('have npy files but without flo')
                 except Exception as e:
                     LOGGER.warning(f'{self.prefix}WARNING ⚠️ Removing corrupt *.npy image file {fn} due to: {e}')
                     Path(fn).unlink(missing_ok=True)
                     im = cv2.imread(f)  # BGR
+                    flo=cv2.imread(flo) # BGR
             else:  # read image
                 im = cv2.imread(f)  # BGR
+                flo=cv2.imread(flo_files) # BGR
+                # print("这是img",im.shape)
+                # print("这是光流图",flo.shape)
+                # print("还未处理数据，为原图分辨率")
             if im is None:
                 raise FileNotFoundError(f'Image Not Found {f}')
 
             h0, w0 = im.shape[:2]  # orig hw
-            if rect_mode:  # resize long side to imgsz while maintaining aspect ratio
+            if rect_mode:  # false, resize long side to imgsz while maintaining aspect ratio
                 r = self.imgsz / max(h0, w0)  # ratio
                 if r != 1:  # if sizes are not equal
                     w, h = (min(math.ceil(w0 * r), self.imgsz), min(math.ceil(h0 * r), self.imgsz))
                     im = cv2.resize(im, (w, h), interpolation=cv2.INTER_LINEAR)
+                    flo = cv2.resize(flo, (w, h), interpolation=cv2.INTER_LINEAR)
+                    
             elif not (h0 == w0 == self.imgsz):  # resize by stretching image to square imgsz
                 im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
-
-            # Add to buffer if training with augmentations
+                flo = cv2.resize(flo, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR) # flo
+                # print('111',im.shape)
+                # print('222',flo.shape)
+            # Add to buffer if training with augmentations如果使用增强训练，则添加到缓冲区
             if self.augment:
-                self.ims[i], self.im_hw0[i], self.im_hw[i] = im, (h0, w0), im.shape[:2]  # im, hw_original, hw_resized
+                self.ims[i], self.im_hw0[i], self.im_hw[i], self.flo[i]= im, (h0, w0), im.shape[:2], flo  # im, hw_original, hw_resized
                 self.buffer.append(i)
                 if len(self.buffer) >= self.max_buffer_length:
                     j = self.buffer.pop(0)
-                    self.ims[j], self.im_hw0[j], self.im_hw[j] = None, None, None
+                    self.ims[j], self.im_hw0[j], self.im_hw[j], self.flo[j] = None, None, None, None
 
-            return im, (h0, w0), im.shape[:2]
+            return im, (h0, w0), im.shape[:2], flo # flo
 
-        return self.ims[i], self.im_hw0[i], self.im_hw[i]
+        return self.ims[i], self.im_hw0[i], self.im_hw[i], self.flo[i]
 
     def cache_images(self, cache):
-        """Cache images to memory or disk."""
+        """Cache images to memory or disk.
+        好像没什么用
+        """
         b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
         fcn = self.cache_images_to_disk if cache == 'disk' else self.load_image
         with ThreadPool(NUM_THREADS) as pool:
@@ -189,9 +208,9 @@ class BaseDataset(Dataset):
                 if cache == 'disk':
                     b += self.npy_files[i].stat().st_size
                 else:  # 'ram'
-                    self.ims[i], self.im_hw0[i], self.im_hw[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
+                    self.ims[i], self.im_hw0[i], self.im_hw[i] , self.flo[i]= x  # im, hw_orig, hw_resized = load_image(self, i)
                     b += self.ims[i].nbytes
-                pbar.desc = f'{self.prefix}Caching images ({b / gb:.1f}GB {cache})'
+                pbar.desc = f'{self.prefix}Caching images ({b / gb:.1f}GB {cache})' # 进度条（progress bar）的描述字符串
             pbar.close()
 
     def cache_images_to_disk(self, i):
@@ -246,17 +265,21 @@ class BaseDataset(Dataset):
     def __getitem__(self, index):
         """Returns transformed label information for given index."""
         return self.transforms(self.get_image_and_label(index))
+        # 通过index拿到label
+        # 对label进行transforms
 
     def get_image_and_label(self, index):
         """Get and return label information from the dataset."""
         label = deepcopy(self.labels[index])  # requires deepcopy() https://github.com/ultralytics/ultralytics/pull/1948
         label.pop('shape', None)  # shape is for rect, remove it
-        label['img'], label['ori_shape'], label['resized_shape'] = self.load_image(index)
+        label['img'], label['ori_shape'], label['resized_shape'], label['flo'] = self.load_image(index) # 拿到了label应该怎么resize，拿到了读取到的img和flo
+        # print("这是load中img的输出",label['img'].shape)
+        # print("这是load中flo的输出",label['flo'].shape)
         label['ratio_pad'] = (label['resized_shape'][0] / label['ori_shape'][0],
                               label['resized_shape'][1] / label['ori_shape'][1])  # for evaluation
         if self.rect:
             label['rect_shape'] = self.batch_shapes[self.batch[index]]
-        return self.update_labels_info(label)
+        return self.update_labels_info(label) # label字典
 
     def __len__(self):
         """Returns the length of the labels list for the dataset."""
@@ -280,7 +303,7 @@ class BaseDataset(Dataset):
                 return Compose([])
             ```
         """
-        raise NotImplementedError
+        raise NotImplementedError # 未实现错误
 
     def get_labels(self):
         """
@@ -302,3 +325,22 @@ class BaseDataset(Dataset):
             ```
         """
         raise NotImplementedError
+
+    
+if __name__ == '__main__':
+    img_path='/usr/src/dataset/dataset3-7/train/images'
+    flo_path='/usr/src/dataset/dataset3-7/train/flo2png'
+    data_test=BaseDataset(img_path,
+                 flo_path, # 更改
+                 imgsz=640,
+                 cache=False,
+                 augment=True,
+                 hyp=DEFAULT_CFG,
+                 prefix='',
+                 rect=False,
+                 batch_size=16,
+                 stride=32,
+                 pad=0.5,
+                 single_cls=False,
+                 classes=None,
+                 fraction=1.0)

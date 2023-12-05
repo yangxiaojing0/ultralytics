@@ -1,6 +1,7 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
 from copy import copy
+from pathlib import Path
 
 import numpy as np
 
@@ -27,7 +28,7 @@ class DetectionTrainer(BaseTrainer):
         ```
     """
 
-    def build_dataset(self, img_path, mode='train', batch=None):
+    def build_dataset(self, img_path, flo_path, mode='train', batch=None):
         """
         Build YOLO Dataset.
 
@@ -37,22 +38,39 @@ class DetectionTrainer(BaseTrainer):
             batch (int, optional): Size of batches, this is for `rect`. Defaults to None.
         """
         gs = max(int(de_parallel(self.model).stride.max() if self.model else 0), 32)
-        return build_yolo_dataset(self.args, img_path, batch, self.data, mode=mode, rect=mode == 'val', stride=gs)
+        # data is a dict,
+        # data={'train': '/usr/src/dataset/dataset3-7/train', 'val': '/usr/src/dataset/dataset3-7/val', 'test': '/usr/src/dataset/dataset3-7/test', 'nc': 3, 'names': names}
+        return build_yolo_dataset(self.args, img_path, flo_path, batch, self.data, mode=mode, rect=mode == 'val', stride=gs)
 
     def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode='train'):
-        """Construct and return dataloader."""
+        """Construct and return dataloader.
+        包含两步：1. 拿到dataset列表，2. dataloader加载，数据处理
+        dataset_path: images path
+        """
         assert mode in ['train', 'val']
         with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
-            dataset = self.build_dataset(dataset_path, mode, batch_size)
+            ''''''
+            img_path=dataset_path  # train or val
+            try:
+                flo_path=Path(img_path).parent/'flo2png' # 搜索光流图
+                flo_list=list(flo_path.glob('[!.]*.*'))
+                assert len(flo_list)!=0
+                print('trainning with flo files')
+            except:
+                Warning('donot have flo files')
+            dataset = self.build_dataset(img_path, flo_path, mode, batch_size)   # note: 步骤一：dataset
+
+            ''''''
         shuffle = mode == 'train'
         if getattr(dataset, 'rect', False) and shuffle:
             LOGGER.warning("WARNING ⚠️ 'rect=True' is incompatible with DataLoader shuffle, setting shuffle=False")
             shuffle = False
         workers = self.args.workers if mode == 'train' else self.args.workers * 2
-        return build_dataloader(dataset, batch_size, workers, shuffle, rank)  # return dataloader
+        return build_dataloader(dataset, batch_size, workers, shuffle, rank)  # note: 步骤二：return dataloader
 
     def preprocess_batch(self, batch):
         """Preprocesses a batch of images by scaling and converting to float."""
+        batch['flo'] = batch['flo'].to(self.device, non_blocking=True).float() / 255
         batch['img'] = batch['img'].to(self.device, non_blocking=True).float() / 255
         return batch
 
@@ -68,8 +86,11 @@ class DetectionTrainer(BaseTrainer):
 
     def get_model(self, cfg=None, weights=None, verbose=True):
         """Return a YOLO detection model."""
-        model = DetectionModel(cfg, nc=self.data['nc'], verbose=verbose and RANK == -1)
-        if weights:
+        ''''''
+        model = DetectionModel(cfg, nc=self.data['nc'], verbose=verbose and RANK == -1)  # 获取原始模型
+        
+        ''''''
+        if weights:  # 预训练模型
             model.load(weights)
         return model
 

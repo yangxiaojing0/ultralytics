@@ -34,6 +34,12 @@ def img2label_paths(img_paths):
     sa, sb = f'{os.sep}images{os.sep}', f'{os.sep}labels{os.sep}'  # /images/, /labels/ substrings
     return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.txt' for x in img_paths]
 
+''''''
+def img2flo_paths(img_paths):
+    """Define flo paths as a function of image paths."""
+    sa, sb = f'{os.sep}images{os.sep}', f'{os.sep}flo2png{os.sep}'  # /images/, /flo2png/ substrings
+    return [sb.join(x.rsplit(sa, 1)).rsplit('.', 1)[0] + '.png' for x in img_paths]
+
 
 def get_hash(paths):
     """Returns a single hash value of a list of paths (files or dirs)."""
@@ -347,7 +353,8 @@ def check_cls_dataset(dataset, split=''):
             - 'nc' (int): The number of classes in the dataset.
             - 'names' (dict): A dictionary of class names in the dataset.
     """
-
+# names={0: 'kick', 1: 'throw', 2: 'trample'}
+# data={'train': '/usr/src/dataset/dataset3-7/train', 'val': '/usr/src/dataset/dataset3-7/val', 'test': '/usr/src/dataset/dataset3-7/test', 'nc': 3, 'names': names}
     # Download (optional if dataset=https://file.zip is passed directly)
     if str(dataset).startswith(('http:/', 'https:/')):
         dataset = safe_download(dataset, dir=DATASETS_DIR, unzip=True, delete=False)
@@ -364,10 +371,13 @@ def check_cls_dataset(dataset, split=''):
             download(url, dir=data_dir.parent)
         s = f"Dataset download success ✅ ({time.time() - t:.1f}s), saved to {colorstr('bold', data_dir)}\n"
         LOGGER.info(s)
+    
+    ''''''
     train_set = data_dir / 'train'
     val_set = data_dir / 'val' if (data_dir / 'val').exists() else data_dir / 'validation' if \
         (data_dir / 'validation').exists() else None  # data/test or data/val
     test_set = data_dir / 'test' if (data_dir / 'test').exists() else None  # data/val or data/test
+    ''''''
     if split == 'val' and not val_set:
         LOGGER.warning("WARNING ⚠️ Dataset 'split=val' not found, using 'split=test' instead.")
     elif split == 'test' and not test_set:
@@ -582,7 +592,7 @@ def compress_one_image(f, f_new=None, max_dim=1920, quality=50):
 
     try:  # use PIL
         im = Image.open(f)
-        r = max_dim / max(im.height, im.width)  # ratio
+        r = max_dim / max(im.height, im.width)  # ratio,r>1
         if r < 1.0:  # image too large
             im = im.resize((int(im.width * r), int(im.height * r)))
         im.save(f_new or f, 'JPEG', quality=quality, optimize=True)  # save

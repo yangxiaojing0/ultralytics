@@ -15,7 +15,7 @@ save: True  # (bool) save train checkpoints and predict results
 save_period: -1 # (int) Save checkpoint every x epochs (disabled if < 1)
 cache: False  # (bool) True/ram, disk or False. Use cache for data loading
 device:  # (int | str | list, optional) device to run on, i.e. cuda device=0 or device=0,1,2,3 or device=cpu
-workers: 0  # (int) number of worker threads for data loading (per RANK if DDP)
+workers: 8  # (int) number of worker threads for data loading (per RANK if DDP)
 project:  # (str, optional) project name
 name:  # (str, optional) experiment name, results saved to 'project/name' directory
 exist_ok: False  # (bool) whether to overwrite existing experiment
@@ -83,10 +83,10 @@ nms: False  # (bool) CoreML: add NMS
 # Hyperparameters ------------------------------------------------------------------------------------------------------
 lr0: 0.01  # (float) initial learning rate (i.e. SGD=1E-2, Adam=1E-3)
 lrf: 0.01  # (float) final learning rate (lr0 * lrf)
-momentum: 0.937  # (float) SGD momentum/Adam beta1 优化器动量
-weight_decay: 0.0005  # (float) optimizer weight decay 5e-4 权重衰减
-warmup_epochs: 3.0  # (float) warmup epochs (fractions ok) 预热轮次
-warmup_momentum: 0.8  # (float) warmup initial momentum 预热初始动量
+momentum: 0.937  # (float) SGD momentum/Adam beta1
+weight_decay: 0.0005  # (float) optimizer weight decay 5e-4
+warmup_epochs: 3.0  # (float) warmup epochs (fractions ok)
+warmup_momentum: 0.8  # (float) warmup initial momentum
 warmup_bias_lr: 0.1  # (float) warmup initial bias lr
 box: 7.5  # (float) box loss gain
 cls: 0.5  # (float) cls loss gain (scale with pixels)
@@ -98,19 +98,16 @@ nbs: 64  # (int) nominal batch size
 hsv_h: 0.015  # (float) image HSV-Hue augmentation (fraction)
 hsv_s: 0.7  # (float) image HSV-Saturation augmentation (fraction)
 hsv_v: 0.4  # (float) image HSV-Value augmentation (fraction)
-
-# RandomPerspective随机透视
-degrees: 30.0  # (float) image rotation (+/- deg)旋转
-translate: 0.1  # (float) image translation (+/- fraction)平移
-scale: 0.2  # (float) image scale (+/- gain)缩放
-shear: 0.0  # (float) image shear (+/- deg)剪切
-perspective: 0.0  # (float) image perspective (+/- fraction), range 0-0.001 透视
-
-flipud: 0.0  # (float) image flip up-down (probability)上下翻转
-fliplr: 0.0  # (float) image flip left-right (probability)左右翻转
-mosaic: 0.0  # (float) image mosaic (probability)
-mixup: 0.0  # (float) image mixup (probability)image mixup
-copy_paste: 0.0  # (float) segment copy-paste (probability)分割复制粘贴
+degrees: 0.0  # (float) image rotation (+/- deg)
+translate: 0.1  # (float) image translation (+/- fraction)
+scale: 0.5  # (float) image scale (+/- gain)
+shear: 0.0  # (float) image shear (+/- deg)
+perspective: 0.0  # (float) image perspective (+/- fraction), range 0-0.001
+flipud: 0.0  # (float) image flip up-down (probability)
+fliplr: 0.5  # (float) image flip left-right (probability)
+mosaic: 1.0  # (float) image mosaic (probability)
+mixup: 0.0  # (float) image mixup (probability)
+copy_paste: 0.0  # (float) segment copy-paste (probability)
 
 # Custom config.yaml ---------------------------------------------------------------------------------------------------
 cfg:  # (str, optional) for overriding defaults.yaml

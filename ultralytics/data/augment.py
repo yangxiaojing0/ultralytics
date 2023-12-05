@@ -174,6 +174,7 @@ class Mosaic(BaseMixTransform):
             labels_patch = labels if i == 0 else labels['mix_labels'][i - 1]
             # Load image
             img = labels_patch['img']
+            flo = labels_patch['flo']
             h, w = labels_patch.pop('resized_shape')
 
             # Place img in img4
@@ -297,6 +298,7 @@ class MixUp(BaseMixTransform):
         r = np.random.beta(32.0, 32.0)  # mixup ratio, alpha=beta=32.0
         labels2 = labels['mix_labels'][0]
         labels['img'] = (labels['img'] * r + labels2['img'] * (1 - r)).astype(np.uint8)
+        labels['flo'] = (labels['flo'] * r + labels2['flo'] * (1 - r)).astype(np.uint8)
         labels['instances'] = Instances.concatenate([labels['instances'], labels2['instances']], axis=0)
         labels['cls'] = np.concatenate([labels['cls'], labels2['cls']], 0)
         return labels
@@ -344,7 +346,7 @@ class RandomPerspective:
         self.border = border  # mosaic border
         self.pre_transform = pre_transform
 
-    def affine_transform(self, img, border):
+    def affine_transform(self, img,  border, flo=None):
         """
         Applies a sequence of affine transformations centered around the image center.
 
@@ -393,9 +395,11 @@ class RandomPerspective:
         if (border[0] != 0) or (border[1] != 0) or (M != np.eye(3)).any():  # image changed
             if self.perspective:
                 img = cv2.warpPerspective(img, M, dsize=self.size, borderValue=(114, 114, 114))
+                flo = cv2.warpPerspective(flo, M, dsize=self.size, borderValue=(114, 114, 114))
             else:  # affine
                 img = cv2.warpAffine(img, M[:2], dsize=self.size, borderValue=(114, 114, 114))
-        return img, M, s
+                flo = cv2.warpAffine(flo, M[:2], dsize=self.size, borderValue=(114, 114, 114))
+        return img, M, s, flo
 
     def apply_bboxes(self, bboxes, M):
         """
@@ -482,6 +486,7 @@ class RandomPerspective:
         labels.pop('ratio_pad', None)  # do not need ratio pad
 
         img = labels['img']
+        flo = labels['flo']
         cls = labels['cls']
         instances = labels.pop('instances')
         # Make sure the coord formats are right
@@ -492,7 +497,7 @@ class RandomPerspective:
         self.size = img.shape[1] + border[1] * 2, img.shape[0] + border[0] * 2  # w, h
         # M is affine matrix
         # Scale for func:`box_candidates`
-        img, M, scale = self.affine_transform(img, border)
+        img, M, scale, flo = self.affine_transform(img, border, flo)
 
         bboxes = self.apply_bboxes(instances.bboxes, M)
 
@@ -517,6 +522,7 @@ class RandomPerspective:
         labels['instances'] = new_instances[i]
         labels['cls'] = cls[i]
         labels['img'] = img
+        labels['flo'] = flo
         labels['resized_shape'] = img.shape[:2]
         return labels
 
@@ -835,7 +841,7 @@ class Format:
     """
     Formats image annotations for object detection, instance segmentation, and pose estimation tasks. The class
     standardizes the image and instance annotations to be used by the `collate_fn` in PyTorch DataLoader.
-
+    为对象检测、实例分割和姿态估计任务格式化图像注释。类别标准化PyTorch DataLoader中的“collite_fn”要使用的图像和实例注释。
     Attributes:
         bbox_format (str): Format for bounding boxes. Default is 'xywh'.
         normalize (bool): Whether to normalize bounding boxes. Default is True.
@@ -864,8 +870,11 @@ class Format:
         self.batch_idx = batch_idx  # keep the batch indexes
 
     def __call__(self, labels):
+        labels['flo']=cv2.resize(labels['flo'],(640,640))
+        # 魔法函数，__call__函数代表这个类直接被调用，call函数的内容直接被执行
         """Return formatted image, classes, bounding boxes & keypoints to be used by 'collate_fn'."""
         img = labels.pop('img')
+        flo=labels.pop('flo')
         h, w = img.shape[:2]
         cls = labels.pop('cls')
         instances = labels.pop('instances')
@@ -884,6 +893,7 @@ class Format:
         if self.normalize:
             instances.normalize(w, h)
         labels['img'] = self._format_img(img)
+        labels['flo']=self._format_img(flo)
         labels['cls'] = torch.from_numpy(cls) if nl else torch.zeros(nl)
         labels['bboxes'] = torch.from_numpy(instances.bboxes) if nl else torch.zeros((nl, 4))
         if self.return_keypoint:
@@ -918,8 +928,8 @@ class Format:
 def v8_transforms(dataset, imgsz, hyp, stretch=False):
     """Convert images to a size suitable for YOLOv8 training."""
     pre_transform = Compose([
-        Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic),
-        CopyPaste(p=hyp.copy_paste),
+        Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic), # False
+        CopyPaste(p=hyp.copy_paste),  # False, 好像更适用于分割
         RandomPerspective(
             degrees=hyp.degrees,
             translate=hyp.translate,
@@ -927,9 +937,11 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
             shear=hyp.shear,
             perspective=hyp.perspective,
             pre_transform=None if stretch else LetterBox(new_shape=(imgsz, imgsz)),
-        )])
-    flip_idx = dataset.data.get('flip_idx', [])  # for keypoints augmentation
-    if dataset.use_keypoints:
+        )]) 
+    
+    # 关键点填充
+    flip_idx = dataset.data.get('flip_idx', [])  # False, for keypoints augmentation用于关键点扩充
+    if dataset.use_keypoints: # false
         kpt_shape = dataset.data.get('kpt_shape', None)
         if len(flip_idx) == 0 and hyp.fliplr > 0.0:
             hyp.fliplr = 0.0
@@ -937,9 +949,9 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
         elif flip_idx and (len(flip_idx) != kpt_shape[0]):
             raise ValueError(f'data.yaml flip_idx={flip_idx} length must be equal to kpt_shape[0]={kpt_shape[0]}')
 
-    return Compose([
+    return Compose([       
         pre_transform,
-        MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup),
+        MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup), # 叠加融合几张图
         Albumentations(p=1.0),
         RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
         RandomFlip(direction='vertical', p=hyp.flipud),

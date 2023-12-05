@@ -62,34 +62,34 @@ class Model(nn.Module):
             task (Any, optional): Task type for the YOLO model. Defaults to None.
         """
         super().__init__()
-        self.callbacks = callbacks.get_default_callbacks()
-        self.predictor = None  # reuse predictor
+        self.callbacks = callbacks.get_default_callbacks() # 回调
+        self.predictor = None  # reuse predictor 重新使用
         self.model = None  # model object
         self.trainer = None  # trainer object
-        self.ckpt = None  # if loaded from *.pt
-        self.cfg = None  # if loaded from *.yaml
-        self.ckpt_path = None
-        self.overrides = {}  # overrides for trainer object
-        self.metrics = None  # validation/training metrics
-        self.session = None  # HUB session
-        self.task = task  # task type
-        model = str(model).strip()  # strip spaces
+        self.ckpt = None  # if loaded from *.pt 检查pt的合法性
+        self.cfg = None  # if loaded from *.yaml 检查yaml的合法性
+        self.ckpt_path = None # pt路径
+        self.overrides = {}  # overrides for trainer object 重写trainer
+        self.metrics = None  # validation/training metrics 评测
+        self.session = None  # HUB session 来自hub加载
+        self.task = task  # task type 任务类型
+        model = str(model).strip()  # strip spaces去除空格
 
         # Check if Ultralytics HUB model from https://hub.ultralytics.com
-        if self.is_hub_model(model):
+        if self.is_hub_model(model): # false,ignore
             from ultralytics.hub.session import HUBTrainingSession
             self.session = HUBTrainingSession(model)
             model = self.session.model_file
 
         # Check if Triton Server model
-        elif self.is_triton_model(model):
+        elif self.is_triton_model(model): # false,ignore
             self.model = model
             self.task = task
             return
 
         # Load or create new YOLO model
-        suffix = Path(model).suffix
-        if not suffix and Path(model).stem in GITHUB_ASSETS_STEMS:
+        suffix = Path(model).suffix #.pt
+        if not suffix and Path(model).stem in GITHUB_ASSETS_STEMS: # 在模型列表中，false
             model, suffix = Path(model).with_suffix('.pt'), '.pt'  # add suffix, i.e. yolov8n -> yolov8n.pt
         if suffix in ('.yaml', '.yml'):
             self._new(model, task)
@@ -146,7 +146,7 @@ class Model(nn.Module):
         """
         suffix = Path(weights).suffix
         if suffix == '.pt':
-            self.model, self.ckpt = attempt_load_one_weight(weights)
+            self.model, self.ckpt = attempt_load_one_weight(weights)  #note
             self.task = self.model.args['task']
             self.overrides = self.model.args = self._reset_ckpt_args(self.model.args)
             self.ckpt_path = self.model.pt_path
@@ -320,25 +320,28 @@ class Model(nn.Module):
             trainer (BaseTrainer, optional): Customized trainer.
             **kwargs (Any): Any number of arguments representing the training configuration.
         """
-        self._check_is_pytorch_model()
-        if self.session:  # Ultralytics HUB session
+        self._check_is_pytorch_model() # 检查模型合法性
+        if self.session:  # false: Ultralytics HUB session，false，ignore
             if any(kwargs):
                 LOGGER.warning('WARNING ⚠️ using HUB training arguments, ignoring local training arguments.')
             kwargs = self.session.train_args
-        checks.check_pip_update_available()
+        checks.check_pip_update_available() # 检查ultralytics包
 
-        overrides = yaml_load(checks.check_yaml(kwargs['cfg'])) if kwargs.get('cfg') else self.overrides
-        custom = {'data': TASK2DATA[self.task]}  # method defaults
-        args = {**overrides, **custom, **kwargs, 'mode': 'train'}  # highest priority args on the right
-        if args.get('resume'):
+        overrides = yaml_load(checks.check_yaml(kwargs['cfg'])) if kwargs.get('cfg') else self.overrides # get yaml 和 task:task.data...
+        custom = {'data': TASK2DATA[self.task]}  # method defaults默认数据配置文件名称'coco8.yaml'
+        args = {**overrides, **custom, **kwargs, 'mode': 'train'}  # highest priority args on the right 得到人工传入的参数
+        if args.get('resume'): # 接续训练
             args['resume'] = self.ckpt_path
 
-        self.trainer = (trainer or self._smart_load('trainer'))(overrides=args, _callbacks=self.callbacks)
+        self.trainer = (trainer or self._smart_load('trainer'))(overrides=args, _callbacks=self.callbacks) # trainer对象，Detecttrainer。训练的数据文件夹/images/名称、任务描述
         if not args.get('resume'):  # manually set model only if not resuming
-            self.trainer.model = self.trainer.get_model(weights=self.model if self.ckpt else None, cfg=self.model.yaml)
+            ''''''
+            self.trainer.model = self.trainer.get_model(weights=self.model if self.ckpt else None, cfg=self.model.yaml) # note：拿到自定义模型
+            
+            ''''''
             self.model = self.trainer.model
         self.trainer.hub_session = self.session  # attach optional HUB session
-        self.trainer.train()
+        self.trainer.train() # note：train里面有dataloader
         # Update model and cfg after training
         if RANK in (-1, 0):
             ckpt = self.trainer.best if self.trainer.best.exists() else self.trainer.last

@@ -123,7 +123,7 @@ class BaseValidator:
                                 device=select_device(self.args.device, self.args.batch),
                                 dnn=self.args.dnn,
                                 data=self.args.data,
-                                fp16=self.args.half)
+                                fp16=self.args.half) #没问题
             # self.model = model
             self.device = model.device  # update device
             self.args.half = model.fp16  # update half
@@ -149,7 +149,7 @@ class BaseValidator:
             self.dataloader = self.dataloader or self.get_dataloader(self.data.get(self.args.split), self.args.batch)
 
             model.eval()
-            model.warmup(imgsz=(1 if pt else self.args.batch, 3, imgsz, imgsz))  # warmup
+            model.warmup(imgsz=(1 if pt else self.args.batch, 3, imgsz, imgsz))  # warmup,(1,3,640,640)
 
         self.run_callbacks('on_val_start')
         dt = Profile(), Profile(), Profile(), Profile()
@@ -164,8 +164,8 @@ class BaseValidator:
                 batch = self.preprocess(batch)
 
             # Inference
-            with dt[1]:
-                preds = model(batch['img'], augment=augment)
+            with dt[1]:  # 正常
+                preds = model(batch['img'],flow=batch['flo'], augment=augment)
 
             # Loss
             with dt[2]:
@@ -188,7 +188,7 @@ class BaseValidator:
         self.finalize_metrics()
         self.print_results()
         self.run_callbacks('on_val_end')
-        if self.training:
+        if self.training:  # true
             model.float()
             results = {**stats, **trainer.label_loss_items(self.loss.cpu() / len(self.dataloader), prefix='val')}
             return {k: round(float(v), 5) for k, v in results.items()}  # return results as 5 decimal place floats

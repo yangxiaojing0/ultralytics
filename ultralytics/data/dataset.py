@@ -3,6 +3,8 @@ import contextlib
 from itertools import repeat
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
+import re
+import sys
 
 import cv2
 import numpy as np
@@ -10,10 +12,14 @@ import torch
 import torchvision
 
 from ultralytics.utils import LOCAL_RANK, NUM_THREADS, TQDM, colorstr, is_dir_writeable
+import yaml
 
 from .augment import Compose, Format, Instances, LetterBox, classify_albumentations, classify_transforms, v8_transforms
 from .base import BaseDataset
-from .utils import HELP_URL, LOGGER, get_hash, img2label_paths, verify_image, verify_image_label
+from .utils import HELP_URL, LOGGER, get_hash, img2label_paths, img2flo_paths,verify_image, verify_image_label
+# from ultralytics.data.augment import Compose, Format, Instances, LetterBox, classify_albumentations, classify_transforms, v8_transforms
+# from ultralytics.data.base import BaseDataset
+# from ultralytics.data.utils import HELP_URL, LOGGER, get_hash, img2label_paths, img2flo_paths,verify_image, verify_image_label
 
 # Ultralytics dataset *.cache version, >= 1.0.0 for YOLOv8
 DATASET_CACHE_VERSION = '1.0.3'
@@ -38,7 +44,7 @@ class YOLODataset(BaseDataset):
         self.use_keypoints = use_keypoints
         self.data = data
         assert not (self.use_segments and self.use_keypoints), 'Can not use both segments and keypoints.'
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs) # note:继承了父类的__init__方法
 
     def cache_labels(self, path=Path('./labels.cache')):
         """
@@ -49,7 +55,7 @@ class YOLODataset(BaseDataset):
         Returns:
             (dict): labels.
         """
-        x = {'labels': []}
+        x = {'labels': []} # x = img+flo,imgsz...
         nm, nf, ne, nc, msgs = 0, 0, 0, 0, []  # number missing, found, empty, corrupt, messages
         desc = f'{self.prefix}Scanning {path.parent / path.stem}...'
         total = len(self.im_files)
@@ -93,10 +99,11 @@ class YOLODataset(BaseDataset):
         x['msgs'] = msgs  # warnings
         save_dataset_cache_file(self.prefix, path, x)
         return x
-
+    
+    
     def get_labels(self):
         """Returns dictionary of labels for YOLO training."""
-        self.label_files = img2label_paths(self.im_files)
+        self.label_files = img2label_paths(self.im_files)  # 列表
         cache_path = Path(self.label_files[0]).parent.with_suffix('.cache')
         try:
             cache, exists = load_dataset_cache_file(cache_path), True  # attempt to load a *.cache file
@@ -132,25 +139,29 @@ class YOLODataset(BaseDataset):
                 lb['segments'] = []
         if len_cls == 0:
             LOGGER.warning(f'WARNING ⚠️ No labels found in {cache_path}, training may not work correctly. {HELP_URL}')
+        
         return labels
 
     def build_transforms(self, hyp=None):
         """Builds and appends transforms to the list."""
         if self.augment:
             hyp.mosaic = hyp.mosaic if self.augment and not self.rect else 0.0
+            ''''''
+            assert hyp.mosaic==False, 'flo can not mosaic'
             hyp.mixup = hyp.mixup if self.augment and not self.rect else 0.0
-            transforms = v8_transforms(self, self.imgsz, hyp)
+            transforms = v8_transforms(self, self.imgsz, hyp) # dataset, imgsz, hyp
         else:
-            transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)])
+            transforms = Compose([LetterBox(new_shape=(self.imgsz, self.imgsz), scaleup=False)]) # Compose用于串联多个图像转换操作
+            
         transforms.append(
             Format(bbox_format='xywh',
                    normalize=True,
-                   return_mask=self.use_segments,
-                   return_keypoint=self.use_keypoints,
+                   return_mask=self.use_segments,  #仅分割
+                   return_keypoint=self.use_keypoints, # 仅pose
                    batch_idx=True,
-                   mask_ratio=hyp.mask_ratio,
-                   mask_overlap=hyp.overlap_mask))
-        return transforms
+                   mask_ratio=hyp.mask_ratio, # False
+                   mask_overlap=hyp.overlap_mask)) # False，一系列转换方法
+        return transforms # 这就是最终拿到的dataset list的结果
 
     def close_mosaic(self, hyp):
         """Sets mosaic, copy_paste and mixup options to 0.0 and builds transformations."""
@@ -175,19 +186,21 @@ class YOLODataset(BaseDataset):
     def collate_fn(batch):
         """Collates data samples into batches."""
         new_batch = {}
-        keys = batch[0].keys()
-        values = list(zip(*[list(b.values()) for b in batch]))
+        keys = batch[0].keys()  #原shape，后shape，img，flo，cls，bboxes，batch_idx
+        values = list(zip(*[list(b.values()) for b in batch])) # 后面的系列值：原shape，后shape，img，flo，cls，bboxes，batch_idx
         for i, k in enumerate(keys):
             value = values[i]
             if k == 'img':
                 value = torch.stack(value, 0)
+            if k=='flo':
+                value=torch.stack(value,0)
             if k in ['masks', 'keypoints', 'bboxes', 'cls']:
                 value = torch.cat(value, 0)
             new_batch[k] = value
         new_batch['batch_idx'] = list(new_batch['batch_idx'])
         for i in range(len(new_batch['batch_idx'])):
             new_batch['batch_idx'][i] += i  # add target image index for build_targets()
-        new_batch['batch_idx'] = torch.cat(new_batch['batch_idx'], 0)
+        new_batch['batch_idx'] = torch.cat(new_batch['batch_idx'], 0) # 打包拼接
         return new_batch
 
 
@@ -338,3 +351,108 @@ class SemanticDataset(BaseDataset):
     def __init__(self):
         """Initialize a SemanticDataset object."""
         super().__init__()
+
+
+if __name__ == '__main__':
+    pass
+    # debug:
+    # img_path='/usr/src/dataset/dataset3-7/train/images'
+    # flo_path='/usr/src/dataset/dataset3-7/train/flo2png'
+    # DEFAULT_CFG_PATH ='/usr/src/ultralytics/ultralytics/cfg/default.yaml'
+    # SimpleNamespace = type(sys.implementation)
+    # class IterableSimpleNamespace(SimpleNamespace):
+    #     """Ultralytics IterableSimpleNamespace is an extension class of SimpleNamespace that adds iterable functionality and
+    #     enables usage with dict() and for loops.
+    #     """
+
+    #     def __iter__(self):
+    #         """Return an iterator of key-value pairs from the namespace's attributes."""
+    #         return iter(vars(self).items())
+
+    #     def __str__(self):
+    #         """Return a human-readable string representation of the object."""
+    #         return '\n'.join(f'{k}={v}' for k, v in vars(self).items())
+
+    #     def __getattr__(self, attr):
+    #         """Custom attribute access error message with helpful information."""
+    #         name = self.__class__.__name__
+    #         raise AttributeError(f"""
+    #             '{name}' object has no attribute '{attr}'. This may be caused by a modified or out of date ultralytics
+    #             'default.yaml' file.\nPlease update your code with 'pip install -U ultralytics' and if necessary replace
+    #             {DEFAULT_CFG_PATH} with the latest version from
+    #             https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/default.yaml
+    #             """)
+
+    #     def get(self, key, default=None):
+    #         """Return the value of the specified key if it exists; otherwise, return the default value."""
+    #         return getattr(self, key, default)
+
+
+    # def yaml_load(file='data.yaml', append_filename=False):
+    #     """
+    #     Load YAML data from a file.
+
+    #     Args:
+    #         file (str, optional): File name. Default is 'data.yaml'.
+    #         append_filename (bool): Add the YAML filename to the YAML dictionary. Default is False.
+
+    #     Returns:
+    #         (dict): YAML data and file name.
+    #     """
+    #     assert Path(file).suffix in ('.yaml', '.yml'), f'Attempting to load non-YAML file {file} with yaml_load()'
+    #     with open(file, errors='ignore', encoding='utf-8') as f:
+    #         s = f.read()  # string
+
+    #         # Remove special characters
+    #         if not s.isprintable():
+    #             s = re.sub(r'[^\x09\x0A\x0D\x20-\x7E\x85\xA0-\uD7FF\uE000-\uFFFD\U00010000-\U0010ffff]+', '', s)
+
+    #         # Add YAML filename to dict and return
+    #         data = yaml.safe_load(s) or {}  # always return a dict (yaml.safe_load() may return None for empty files)
+    #         if append_filename:
+    #             data['yaml_file'] = str(file)
+    #         return data
+    # # Default configuration
+    # DEFAULT_CFG_DICT = yaml_load(DEFAULT_CFG_PATH)
+    # for k, v in DEFAULT_CFG_DICT.items():
+    #     if isinstance(v, str) and v.lower() == 'none':
+    #         DEFAULT_CFG_DICT[k] = None
+    # DEFAULT_CFG_KEYS = DEFAULT_CFG_DICT.keys()
+    # DEFAULT_CFG = IterableSimpleNamespace(**DEFAULT_CFG_DICT)
+    
+    # # data_test=YOLODataset(img_path,
+    # #              flo_path, # 更改
+    # #              imgsz=640,
+    # #              cache=False,
+    # #              augment=True,
+    # #              hyp=DEFAULT_CFG,
+    # #              prefix='',
+    # #              rect=False,
+    # #              batch_size=16,
+    # #              stride=32,
+    # #              pad=0.5,
+    # #              single_cls=False,
+    # #              classes=None,
+    # #              fraction=1.0)
+    # names={0: 'kick', 1: 'throw', 2: 'trample'}
+    # data={'train': '/usr/src/dataset/dataset3-7/train', 'val': '/usr/src/dataset/dataset3-7/val', 'test': '/usr/src/dataset/dataset3-7/test', 'nc': 3, 'names': names}
+    # data_test=YOLODataset(
+    #     img_path=img_path,
+    #     flo_path=flo_path,
+    #     imgsz=640,
+    #     batch_size=2,
+    #     augment=True,  # augmentation
+    #     hyp=DEFAULT_CFG,  # TODO: probably add a get_hyps_from_cfg function
+    #     # rect=cfg.rect or rect,  # rectangular batches
+    #     rect=False,  # note: 更改关闭
+    #     cache=None,
+    #     single_cls=False,
+    #     stride=32,
+    #     pad=0.0,
+    #     prefix='',
+    #     use_segments=False,
+    #     use_keypoints=False,
+    #     # classes=cfg.classes,
+    #     classes=None,
+    #     data=data, # 配置文件：sort.yaml
+    #     fraction=1.0) # 分数？

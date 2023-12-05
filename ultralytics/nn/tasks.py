@@ -3,7 +3,8 @@
 import contextlib
 from copy import deepcopy
 from pathlib import Path
-
+import warnings
+from ultralytics.nn.fs import flow_adj, fusion_layer
 import torch
 import torch.nn as nn
 
@@ -25,8 +26,51 @@ except ImportError:
 
 
 class BaseModel(nn.Module):
+    
     """The BaseModel class serves as a base class for all the models in the Ultralytics YOLO family."""
+    def __init__(self,  cfg='./models/yolov5s.yaml', ch=3, nc=None,
+                 anchors=None ):  # model, input channels, number of classes
+        super().__init__()
+        # 光流融合层
+        self.fusion_layer = fusion_layer # [15,18,21]
+        self.flow_adj = flow_adj()
+        # 计数
+        self.num=1
+        
+        # # 读取模型配置文件
+        # if isinstance(cfg, dict):
+        #     self.yaml = cfg  # model dict，字典传入
+        # else:  # is *.yaml，配置文件传入
+        #     import yaml  # for torch hub
+        #     self.yaml_file = Path(cfg).name
+        #     with open(cfg, encoding='ascii', errors='ignore') as f:
+        #         self.yaml = yaml.safe_load(f)  # model dict，加载yaml数据到字典
+                
+        # # Define model
+        # ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels：3
+        # if nc and nc != self.yaml['nc']:
+        #     LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")# 重写yolov5s.yaml中的nc
+        #     self.yaml['nc'] = nc  # override yaml value
+        # if anchors:
+        #     LOGGER.info(f'Overriding model.yaml anchors with anchors={anchors}') # 重写，这里不重写
+        #     self.yaml['anchors'] = round(anchors)  # override yaml value
+        # self.model, self.save = parse_model(deepcopy(self.yaml), ch=[ch])  # model, savelist。yolov5模型结构解析，打印
+        # self.names = [str(i) for i in range(self.yaml['nc'])]  # default names，类别的名称
+        # self.inplace = self.yaml.get('inplace', True) #？
+        
+        # Build strides, anchors
+        # m = self.model[-1]  # Detect()
+        # if isinstance(m, Detect):
+        #     s = 256  # 2x min stride
+        #     m.inplace = self.inplace
+        #     m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))])  # forward
+        #     m.anchors /= m.stride.view(-1, 1, 1)
+        #     # check_anchor_order(m)
+        #     self.stride = m.stride
+        #     self._initialize_biases()  # only run once偏置项
 
+        self.num += 1
+        
     def forward(self, x, *args, **kwargs):
         """
         Forward pass of the model on a single scale. Wrapper for `_forward_once` method.
@@ -39,9 +83,10 @@ class BaseModel(nn.Module):
         """
         if isinstance(x, dict):  # for cases of training and validating while training.
             return self.loss(x, *args, **kwargs)
-        return self.predict(x, *args, **kwargs)
 
-    def predict(self, x, profile=False, visualize=False, augment=False):
+        return self.predict(x, *args, **kwargs) # 输入非字典，返回x
+
+    def predict(self, x, flow=None, profile=False, visualize=False, augment=False):
         """
         Perform a forward pass through the network.
 
@@ -54,11 +99,13 @@ class BaseModel(nn.Module):
         Returns:
             (torch.Tensor): The last output of the model.
         """
+        assert flow!=None
         if augment:
+            raise ValueError('flo is not agreement of predict augment')
             return self._predict_augment(x)
-        return self._predict_once(x, profile, visualize)
+        return self._predict_once(x, flow, profile, visualize)
 
-    def _predict_once(self, x, profile=False, visualize=False):
+    def _predict_once(self, x, flow=None,profile=False, visualize=False):
         """
         Perform a forward pass through the network.
 
@@ -77,6 +124,12 @@ class BaseModel(nn.Module):
             if profile:
                 self._profile_one_layer(m, x, dt)
             x = m(x)  # run
+            ''''''
+            if m.i in self.fusion_layer and self.num==2 and flow is not None:
+                flow_fm = self.flow_adj.flow_3ds(flow)  # note：flow feature map拿到三张光流特征图
+                x = self.flow_adj.fusion(x, m, flow_fm) # note：特征融合
+            
+            ''''''
             y.append(x if m.i in self.save else None)  # save output
             if visualize:
                 feature_visualization(x, m.type, m.i, save_dir=visualize)
@@ -208,8 +261,9 @@ class BaseModel(nn.Module):
         if not hasattr(self, 'criterion'):
             self.criterion = self.init_criterion()
 
-        preds = self.forward(batch['img']) if preds is None else preds
+        preds = self.forward(batch['img'],flow=batch['flo']) if preds is None else preds
         return self.criterion(preds, batch)
+    
 
     def init_criterion(self):
         """Initialize the loss criterion for the BaseModel."""
@@ -222,54 +276,75 @@ class DetectionModel(BaseModel):
     def __init__(self, cfg='yolov8n.yaml', ch=3, nc=None, verbose=True):  # model, input channels, number of classes
         """Initialize the YOLOv8 detection model with the given config and parameters."""
         super().__init__()
-        self.yaml = cfg if isinstance(cfg, dict) else yaml_model_load(cfg)  # cfg dict
+        self.yaml = cfg if isinstance(cfg, dict) else yaml_model_load(cfg)  # cfg dict配置字典
 
         # Define model
         ch = self.yaml['ch'] = self.yaml.get('ch', ch)  # input channels
-        if nc and nc != self.yaml['nc']:
+        if nc and nc != self.yaml['nc']: # 重写nc，True
             LOGGER.info(f"Overriding model.yaml nc={self.yaml['nc']} with nc={nc}")
             self.yaml['nc'] = nc  # override YAML value
-        self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist
-        self.names = {i: f'{i}' for i in range(self.yaml['nc'])}  # default names dict
-        self.inplace = self.yaml.get('inplace', True)
+        self.model, self.save = parse_model(deepcopy(self.yaml), ch=ch, verbose=verbose)  # model, savelist，获取原始模型，打印模型，不涉及前向传播，不用改
+        self.names = {i: f'{i}' for i in range(self.yaml['nc'])}  # default names dict，默认是0，1，2，。。22。数字命名
+        self.inplace = self.yaml.get('inplace', True) # true
 
         # Build strides
-        m = self.model[-1]  # Detect()
+        m = self.model[-1]  # Detect()，最后一层
         if isinstance(m, (Detect, Segment, Pose)):
             s = 256  # 2x min stride
             m.inplace = self.inplace
-            forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, Pose)) else self.forward(x)
-            m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward
+            ''''''
+            # forward = lambda x: self.forward(x)[0] if isinstance(m, (Segment, Pose)) else self.forward(x) # note：前向传播
+            assert isinstance(m, (Segment, Pose))==False
+            forward = lambda x,flow: self.forward(x,flow) # note：前向传播
+            # m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s))])  # forward，模拟一次前向传播，计算步长，结果【8.,16.,32】
+            # forward = lambda x,flow: self.forward(x,flow)[0] if isinstance(m, (Segment, Pose)) else self.forward(x,flow) # note：前向传播
+            m.stride = torch.tensor([s / x.shape[-2] for x in forward(torch.zeros(1, ch, s, s),flow=torch.zeros(1, ch, s, s))])  # forward，模拟一次前向传播，计算步长，结果【8.,16.,32】
+            ''''''
             self.stride = m.stride
-            m.bias_init()  # only run once
+            m.bias_init()  # only run once 偏置初始化, 打印YOLOv8 summary: 225 layers, 3011433 parameters, 3011417 gradients, 8.2 GFLOPs
         else:
             self.stride = torch.Tensor([32])  # default stride for i.e. RTDETR
 
         # Init weights, biases
         initialize_weights(self)
-        if verbose:
+        if verbose:   #true
             self.info()
             LOGGER.info('')
-
-    def _predict_augment(self, x):
+    
+    
+    def _predict_augment(self, x,flow=None):
         """Perform augmentations on input image x and return augmented inference and train outputs."""
         img_size = x.shape[-2:]  # height, width
         s = [1, 0.83, 0.67]  # scales
         f = [None, 3, None]  # flips (2-ud, 3-lr)
         y = []  # outputs
+        if flow==None:
+            warnings('flow is None')
         for si, fi in zip(s, f):
             xi = scale_img(x.flip(fi) if fi else x, si, gs=int(self.stride.max()))
-            yi = super().predict(xi)[0]  # forward
+            xf=scale_img(flow.flip(fi) if fi else flow, si, gs=int(self.stride.max()))
+            ''''''
+            yi = super().predict(xi, xf)[0]  # forward
+            
+            ''''''
             yi = self._descale_pred(yi, fi, si, img_size)
             y.append(yi)
         y = self._clip_augmented(y)  # clip augmented tails
-        return torch.cat(y, -1), None  # augmented inference, train
+        return torch.cat(y, -1), None  # augmented inference, train, -1表示沿着最后一个维度连接张量
+        # 假设我们有两个4维张量a和b，其中a的形状为(2, 3, 4, 5)，b的形状为(2, 3, 4, 6)。
+        # 我们可以使用torch.cat([a, b], -1)将它们连接起来，得到一个新的张量，其形状为(2, 3, 4, 11)。
 
-    @staticmethod
+    @staticmethod  # 静态方法，不需要依赖于类的实例
     def _descale_pred(p, flips, scale, img_size, dim=1):
-        """De-scale predictions following augmented inference (inverse operation)."""
-        p[:, :4] /= scale  # de-scale
-        x, y, wh, cls = p.split((1, 1, 2, p.shape[dim] - 4), dim)
+        """De-scale predictions following augmented inference (inverse operation).
+        p：张量
+        flips：是否进行了图像翻转的整数，如果进行了水平或垂直翻转，值为2或3
+        scale：用于缩放原始图像的尺度
+        img_size：原始图像尺寸的元组
+        dim：维度，指定了要在哪个维度上进行分割和连接操作
+        """
+        p[:, :4] /= scale  # de-scale 前四列除以缩放尺度
+        x, y, wh, cls = p.split((1, 1, 2, p.shape[dim] - 4), dim) # 使用 split 函数将 p 张量在 dim 维度上分割成四个部分
         if flips == 2:
             y = img_size[0] - y  # de-flip ud
         elif flips == 3:

@@ -75,15 +75,17 @@ def seed_worker(worker_id):  # noqa
     random.seed(worker_seed)
 
 
-def build_yolo_dataset(cfg, img_path, batch, data, mode='train', rect=False, stride=32):
+def build_yolo_dataset(cfg, img_path, flo_path, batch, data, mode='train', rect=False, stride=32):
     """Build YOLO Dataset."""
     return YOLODataset(
         img_path=img_path,
+        flo_path=flo_path,
         imgsz=cfg.imgsz,
         batch_size=batch,
         augment=mode == 'train',  # augmentation
         hyp=cfg,  # TODO: probably add a get_hyps_from_cfg function
-        rect=cfg.rect or rect,  # rectangular batches
+        # rect=cfg.rect or rect,  # rectangular batches
+        rect=False,  # note: 更改关闭
         cache=cfg.cache or None,
         single_cls=cfg.single_cls or False,
         stride=int(stride),
@@ -91,9 +93,10 @@ def build_yolo_dataset(cfg, img_path, batch, data, mode='train', rect=False, str
         prefix=colorstr(f'{mode}: '),
         use_segments=cfg.task == 'segment',
         use_keypoints=cfg.task == 'pose',
-        classes=cfg.classes,
-        data=data,
-        fraction=cfg.fraction if mode == 'train' else 1.0)
+        # classes=cfg.classes,
+        classes=None,
+        data=data, # 配置文件：sort.yaml
+        fraction=cfg.fraction if mode == 'train' else 1.0) # 分数？
 
 
 def build_dataloader(dataset, batch, workers, shuffle=True, rank=-1):

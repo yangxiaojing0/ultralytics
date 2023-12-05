@@ -4,6 +4,7 @@ import ast
 import contextlib
 import json
 import platform
+# import warnings
 import zipfile
 from collections import OrderedDict, namedtuple
 from pathlib import Path
@@ -125,7 +126,7 @@ class AutoBackend(nn.Module):
             model = attempt_load_weights(weights if isinstance(weights, list) else w,
                                          device=device,
                                          inplace=True,
-                                         fuse=fuse)
+                                         fuse=fuse) #没问题
             if hasattr(model, 'kpt_shape'):
                 kpt_shape = model.kpt_shape  # pose-only
             stride = max(int(model.stride.max()), 32)  # model stride
@@ -325,7 +326,7 @@ class AutoBackend(nn.Module):
 
         self.__dict__.update(locals())  # assign all variables to self
 
-    def forward(self, im, augment=False, visualize=False):
+    def forward(self, im, flow, augment=False, visualize=False):
         """
         Runs inference on the YOLOv8 MultiBackend model.
 
@@ -344,7 +345,9 @@ class AutoBackend(nn.Module):
             im = im.permute(0, 2, 3, 1)  # torch BCHW to numpy BHWC shape(1,320,192,3)
 
         if self.pt or self.nn_module:  # PyTorch
-            y = self.model(im, augment=augment, visualize=visualize) if augment or visualize else self.model(im)
+            # print(flow) # note:im，flow为nan,预热时可以的，模拟前向传播
+            y = self.model(im, flow, augment=augment, visualize=visualize) if augment or visualize else self.model(im,flow)
+            # warnings('flo is only agree for .pt model')
         elif self.jit:  # TorchScript
             y = self.model(im)
         elif self.dnn:  # ONNX OpenCV DNN
@@ -475,9 +478,12 @@ class AutoBackend(nn.Module):
         """
         warmup_types = self.pt, self.jit, self.onnx, self.engine, self.saved_model, self.pb, self.triton, self.nn_module
         if any(warmup_types) and (self.device.type != 'cpu' or self.triton):
-            im = torch.empty(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input
+            # im = torch.zeros(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input
+            # flo = torch.zeros(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input
+            im = torch.empty(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input，前两句也可以
+            flo = torch.empty(*imgsz, dtype=torch.half if self.fp16 else torch.float, device=self.device)  # input
             for _ in range(2 if self.jit else 1):  #
-                self.forward(im)  # warmup
+                self.forward(im,flo)  # warmup
 
     @staticmethod
     def _apply_default_class_names(data):
