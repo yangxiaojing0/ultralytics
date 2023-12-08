@@ -14,7 +14,7 @@ __all__ = ('DFL', 'HGBlock', 'HGStem', 'SPP', 'SPPF', 'C1', 'C2', 'C3', 'C2f', '
 
 class DFL(nn.Module):
     """
-    Integral module of Distribution Focal Loss (DFL).
+    Integral module of Distribution Focal Loss (DFL).分布焦损失积分模块
 
     Proposed in Generalized Focal Loss https://ieeexplore.ieee.org/document/9792391
     """

@@ -206,7 +206,7 @@ class DetectionValidator(BaseValidator):
             print('trainning with flo files')
         except:
             Warning('donot have flo files')
-        dataset = self.build_dataset(img_path, flo_path, batch_size, mode='val')
+        dataset = self.build_dataset(img_path, flo_path, mode='val',batch=batch_size)
         # dataset = self.build_dataset(dataset_path, batch=batch_size, mode='val')
         return build_dataloader(dataset, batch_size, self.args.workers, shuffle=False, rank=-1)  # return dataloader
 

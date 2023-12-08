@@ -1,4 +1,11 @@
+import os
+from pathlib import Path
+import sys
 from ultralytics import YOLO
+
+# current_dir=sys.path[0]
+# root_dir=Path(current_dir).parent
+# os.chdir(root_dir)
 
 def train():
     # train
@@ -10,7 +17,8 @@ def train():
     model = YOLO("/usr/src/ultralytics/ultralytics/yolov8n.pt")  # 加载预训练模型（建议用于训练）,原始网络
 
     # # 使用模型
-    model.train(data="/usr/src/ultralytics/ultralytics/cfg/datasets/sort.yaml", epochs=100, batch=4, device='0')  # 训练模型
+    # model.train(data="ultralytics/cfg/datasets/sort.yaml", epochs=100, batch=16, device='0,1')  # 训练模型
+    model.train(data="/usr/src/ultralytics/ultralytics/cfg/datasets/sort.yaml", epochs=100, batch=16, device='0',resume=True)  # 训练模型
     # metrics = model.val()  # 在验证集上评估模型性能
     # results = model("https://ultralytics.com/images/bus.jpg")  # 对图像进行预测
     # success = model.export(format="onnx")  # 将模型导出为 ONNX 格式
@@ -18,15 +26,15 @@ def train():
 
 def val():
     # val
-    model = YOLO("/usr/src/ultralytics/runs/v1_save/train3/weights/best.pt")
+    model = YOLO("runs/save/v2.5_train/weights/best.pt")
     # 如果不设置数据，它将使用model.pt中的数据集相关yaml文件。
-    metrics = model.val()
-    metrics = model.val(data='/usr/src/ultralytics/ultralytics/cfg/datasets/sort.yaml')
+    # metrics = model.val()
+    metrics = model.val(data='ultralytics/cfg/datasets/sort.yaml',batch=1,device='0')
 
-    metrics.box.map    # map50-95
+    # metrics.box.map    # map50-95
     metrics.box.map50  # map50
-    metrics.box.map75  # map75
-    metrics.box.maps   # a list contains map50-95 of each category
+    # metrics.box.map75  # map75
+    # metrics.box.maps   # a list contains map50-95 of each category
     
 if __name__ == '__main__':
     train()

@@ -671,6 +671,7 @@ def feature_visualization(x, module_type, stage, n=32, save_dir=Path('runs/detec
             return
     batch, channels, height, width = x.shape  # batch, channels, height, width
     if height > 1 and width > 1:
+        # save_dir=Path('/usr/src/ultralytics/runs/save/v2.5_det')
         f = save_dir / f"stage{stage}_{module_type.split('.')[-1]}_features.png"  # filename
 
         blocks = torch.chunk(x[0].cpu(), channels, dim=0)  # select batch index 0, block by channels

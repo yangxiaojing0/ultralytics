@@ -576,6 +576,7 @@ class RandomHSV:
         The modified image replaces the original image in the input 'labels' dict.
         """
         img = labels['img']
+        flo = labels['flo'] #flo不做处理
         if self.hgain or self.sgain or self.vgain:
             r = np.random.uniform(-1, 1, 3) * [self.hgain, self.sgain, self.vgain] + 1  # random gains
             hue, sat, val = cv2.split(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
@@ -627,6 +628,7 @@ class RandomFlip:
             (dict): The same dict with the flipped image and updated instances under the 'img' and 'instances' keys.
         """
         img = labels['img']
+        flo = labels['flo']
         instances = labels.pop('instances')
         instances.convert_bbox(format='xywh')
         h, w = img.shape[:2]
@@ -636,14 +638,17 @@ class RandomFlip:
         # Flip up-down
         if self.direction == 'vertical' and random.random() < self.p:
             img = np.flipud(img)
+            flo = np.flipud(flo)
             instances.flipud(h)
         if self.direction == 'horizontal' and random.random() < self.p:
             img = np.fliplr(img)
+            flo = np.fliplr(flo)
             instances.fliplr(w)
             # For keypoints
             if self.flip_idx is not None and instances.keypoints is not None:
                 instances.keypoints = np.ascontiguousarray(instances.keypoints[:, self.flip_idx, :])
         labels['img'] = np.ascontiguousarray(img)
+        labels['flo'] = np.ascontiguousarray(flo)
         labels['instances'] = instances
         return labels
 
@@ -791,7 +796,7 @@ class Albumentations:
     compression.
     """
 
-    def __init__(self, p=1.0):
+    def __init__(self, p=0.01):
         """Initialize the transform object for YOLO bbox formatted params."""
         self.p = p
         self.transform = None
@@ -801,14 +806,22 @@ class Albumentations:
 
             check_version(A.__version__, '1.0.3', hard=True)  # version requirement
 
+            # T = [
+            #     A.Blur(p=0.01),# 模糊
+            #     A.MedianBlur(p=0.01), # 模糊
+            #     A.ToGray(p=0.01), # 灰度
+            #     A.CLAHE(p=0.01),# 自适应直方图均衡
+            #     A.RandomBrightnessContrast(p=0.01),# 随机亮度和对比度
+            #     A.RandomGamma(p=0.0), #？ 
+            #     A.ImageCompression(quality_lower=75, p=0.01)]  # transforms
             T = [
-                A.Blur(p=0.01),
-                A.MedianBlur(p=0.01),
-                A.ToGray(p=0.01),
-                A.CLAHE(p=0.01),
-                A.RandomBrightnessContrast(p=0.0),
-                A.RandomGamma(p=0.0),
-                A.ImageCompression(quality_lower=75, p=0.0)]  # transforms
+                A.Blur(p=self.p),# 模糊
+                A.MedianBlur(p=self.p), # 模糊
+                A.ToGray(p=self.p), # 灰度
+                A.CLAHE(p=self.p),# 自适应直方图均衡
+                A.RandomBrightnessContrast(p=self.p),# 随机亮度和对比度
+                A.RandomGamma(p=self.p), #？ 
+                A.ImageCompression(quality_lower=75,p=self.p)]  # transforms
             self.transform = A.Compose(T, bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
 
             LOGGER.info(prefix + ', '.join(f'{x}'.replace('always_apply=False, ', '') for x in T if x.p))
@@ -820,6 +833,7 @@ class Albumentations:
     def __call__(self, labels):
         """Generates object detections and returns a dictionary with detection results."""
         im = labels['img']
+        flo=labels['flo']
         cls = labels['cls']
         if len(cls):
             labels['instances'].convert_bbox('xywh')
@@ -830,6 +844,7 @@ class Albumentations:
                 new = self.transform(image=im, bboxes=bboxes, class_labels=cls)  # transformed
                 if len(new['class_labels']) > 0:  # skip update if no bbox in new im
                     labels['img'] = new['image']
+                    labels['flo'] =flo # 由于是图像的模糊等操作，因此不对flo做处理
                     labels['cls'] = np.array(new['class_labels'])
                     bboxes = np.array(new['bboxes'], dtype=np.float32)
             labels['instances'].update(bboxes=bboxes)
@@ -928,7 +943,7 @@ class Format:
 def v8_transforms(dataset, imgsz, hyp, stretch=False):
     """Convert images to a size suitable for YOLOv8 training."""
     pre_transform = Compose([
-        Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic), # False
+        # Mosaic(dataset, imgsz=imgsz, p=hyp.mosaic), # False
         CopyPaste(p=hyp.copy_paste),  # False, 好像更适用于分割
         RandomPerspective(
             degrees=hyp.degrees,
@@ -952,10 +967,10 @@ def v8_transforms(dataset, imgsz, hyp, stretch=False):
     return Compose([       
         pre_transform,
         MixUp(dataset, pre_transform=pre_transform, p=hyp.mixup), # 叠加融合几张图
-        Albumentations(p=1.0),
-        RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v),
-        RandomFlip(direction='vertical', p=hyp.flipud),
-        RandomFlip(direction='horizontal', p=hyp.fliplr, flip_idx=flip_idx)])  # transforms
+        Albumentations(p=hyp.albumentations), # img做模糊灰度等处理，flo不变,这里改变了参数
+        RandomHSV(hgain=hyp.hsv_h, sgain=hyp.hsv_s, vgain=hyp.hsv_v), #img HSV，flo不做处理
+        RandomFlip(direction='vertical', p=hyp.flipud), # 垂直翻转
+        RandomFlip(direction='horizontal', p=hyp.fliplr, flip_idx=flip_idx)])  # 水平翻转 transforms
 
 
 # Classification augmentations -----------------------------------------------------------------------------------------

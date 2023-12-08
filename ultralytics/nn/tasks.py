@@ -132,7 +132,9 @@ class BaseModel(nn.Module):
             ''''''
             y.append(x if m.i in self.save else None)  # save output
             if visualize:
+            # save_dir=Path('/usr/src/ultralytics/runs/save/v2.5_det')
                 feature_visualization(x, m.type, m.i, save_dir=visualize)
+        
         return x
 
     def _predict_augment(self, x):
